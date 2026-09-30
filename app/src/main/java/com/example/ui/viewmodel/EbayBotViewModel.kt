@@ -251,7 +251,8 @@ class EbayBotViewModel(application: Application) : AndroidViewModel(application)
         category: String,
         imageUrl: String,
         resonanceScore: Int,
-        resonanceReason: String
+        resonanceReason: String,
+        customSellingPrice: Double? = null
     ) {
         viewModelScope.launch {
             _isSyncing.value = true
@@ -264,11 +265,63 @@ class EbayBotViewModel(application: Application) : AndroidViewModel(application)
                 category = category,
                 imageUrl = imageUrl,
                 resonanceScore = resonanceScore,
-                resonanceReason = resonanceReason
+                resonanceReason = resonanceReason,
+                customSellingPrice = customSellingPrice
             )
             _isSyncing.value = false
+            val currentSettings = uiState.value.settings
+            val modeName = if (currentSettings.isLiveMode) "🔴 Live auf eBay.de" else "🧪 Im Testmodus"
             showNotification(
-                "✨ Neues Angebot erfolgreich gespiegelt (+1,00 € Marge, kostenloser Versand, 2 Tage Bearbeitungszeit)!",
+                "✨ Angebot $modeName gespiegelt (kostenloser Versand, 2 Tage Bearbeitungszeit)!",
+                isError = false
+            )
+        }
+    }
+
+    fun toggleLiveMode(isLive: Boolean) {
+        viewModelScope.launch {
+            val current = uiState.value.settings
+            val updated = current.copy(isLiveMode = isLive)
+            repository.updateSettings(updated)
+            if (isLive) {
+                showNotification("🔴 Live-Modus aktiviert! Bot interagiert jetzt direkt mit www.ebay.de.", isError = false)
+            } else {
+                showNotification("🧪 Test-Modus aktiviert. Simulation ohne Risiko & ohne echte eBay-Gebühren.", isError = false)
+            }
+        }
+    }
+
+    fun recordEbayLogin(username: String) {
+        viewModelScope.launch {
+            val current = uiState.value.settings
+            val updated = current.copy(
+                isEbayLoggedIn = true,
+                ebayUsername = username,
+                connectedAccount = username
+            )
+            repository.updateSettings(updated)
+            showNotification("✓ Erfolgreich mit originaler eBay.de Seite als '$username' verbunden!", isError = false)
+
+            // Automatically clone top resonance offers if enabled
+            if (current.autoCloneOnLogin && current.autoCloneCount > 0) {
+                cloneTopResonanceOffers(current.autoCloneCount)
+            }
+        }
+    }
+
+    fun cloneTopResonanceOffers(customCount: Int? = null) {
+        viewModelScope.launch {
+            val countToClone = customCount ?: uiState.value.settings.autoCloneCount
+            if (countToClone <= 0) {
+                showNotification("Klonen übersprungen: Anzahl ist auf 0 eingestellt.", isError = false)
+                return@launch
+            }
+            _isSyncing.value = true
+            val clonedCount = repository.cloneResonanceOffers(countToClone)
+            _isSyncing.value = false
+            val modeName = if (uiState.value.settings.isLiveMode) "🔴 Live auf eBay.de" else "🧪 Im Testmodus"
+            showNotification(
+                "🚀 $clonedCount Top-Resonanzangebote erfolgreich $modeName geklont und eingestellt!",
                 isError = false
             )
         }

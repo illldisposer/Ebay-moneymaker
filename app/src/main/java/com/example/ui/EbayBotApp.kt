@@ -55,6 +55,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.graphics.Color
+import com.example.ui.screens.EbayLoginDialog
 import com.example.data.local.entity.ListingEntity
 import com.example.data.local.entity.OrderEntity
 import com.example.ui.screens.AddListingDialog
@@ -85,6 +87,7 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
     var selectedListingForDetail by remember { mutableStateOf<ListingEntity?>(null) }
     var selectedOrderForFulfillment by remember { mutableStateOf<OrderEntity?>(null) }
     var showAddListingDialog by remember { mutableStateOf(false) }
+    var showEbayLoginDialog by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -117,6 +120,37 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                     }
                 },
                 actions = {
+                    // Mode Toggle Badge Button
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (uiState.settings.isLiveMode) MaterialTheme.colorScheme.errorContainer
+                                else MaterialTheme.colorScheme.tertiaryContainer
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .testTag("topbar_mode_badge")
+                    ) {
+                        Text(
+                            text = if (uiState.settings.isLiveMode) "🔴 LIVE" else "🧪 TEST",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (uiState.settings.isLiveMode) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+
+                    // eBay Web Login Button
+                    IconButton(
+                        onClick = { showEbayLoginDialog = true },
+                        modifier = Modifier.testTag("topbar_ebay_login_button")
+                    ) {
+                        Icon(
+                            imageVector = if (uiState.settings.isEbayLoggedIn) Icons.Default.ReceiptLong else Icons.Default.Settings,
+                            contentDescription = "eBay Login",
+                            tint = if (uiState.settings.isEbayLoggedIn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     IconButton(
                         onClick = { viewModel.performLiveSyncCycle() },
                         enabled = !uiState.isSyncing,
@@ -239,14 +273,18 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                         onNavigateToLogs = { currentTab = ScreenTab.LOGS },
                         onToggleBotActive = { active ->
                             viewModel.updateSettings(uiState.settings.copy(isBotActive = active))
-                        }
+                        },
+                        onToggleLiveMode = { viewModel.toggleLiveMode(it) },
+                        onOpenEbayLogin = { showEbayLoginDialog = true },
+                        onCloneOffers = { viewModel.cloneTopResonanceOffers(it) }
                     )
                     ScreenTab.LISTINGS -> ListingsScreen(
                         uiState = uiState,
                         onSelectListing = { selectedListingForDetail = it },
                         onOpenAddListing = { showAddListingDialog = true },
                         onSetFilter = { viewModel.setListingFilter(it) },
-                        onSimulateOurSale = { viewModel.simulateOurSale(it) }
+                        onSimulateOurSale = { viewModel.simulateOurSale(it) },
+                        onCloneOffers = { viewModel.cloneTopResonanceOffers(it) }
                     )
                     ScreenTab.ORDERS -> OrdersScreen(
                         uiState = uiState,
@@ -260,7 +298,9 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                     )
                     ScreenTab.SETTINGS -> SettingsScreen(
                         uiState = uiState,
-                        onSaveSettings = { viewModel.updateSettings(it) }
+                        onSaveSettings = { viewModel.updateSettings(it) },
+                        onOpenEbayLogin = { showEbayLoginDialog = true },
+                        onCloneNow = { viewModel.cloneTopResonanceOffers(it) }
                     )
                 }
             }
@@ -270,12 +310,16 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
     // Modal Dialogs
     if (showAddListingDialog) {
         AddListingDialog(
+            defaultMarginType = uiState.settings.marginType,
+            defaultMarginEuro = uiState.settings.marginEuro,
+            defaultMarginPercent = uiState.settings.marginPercentage,
+            isLiveMode = uiState.settings.isLiveMode,
             onDismiss = {
                 showAddListingDialog = false
                 viewModel.clearAiResult()
             },
-            onConfirm = { title, desc, price, shipping, seller, category, img, score, reason ->
-                viewModel.crawlAndAddListing(title, desc, price, shipping, seller, category, img, score, reason)
+            onConfirm = { title, desc, price, shipping, seller, category, img, score, reason, customPrice ->
+                viewModel.crawlAndAddListing(title, desc, price, shipping, seller, category, img, score, reason, customPrice)
                 showAddListingDialog = false
                 viewModel.clearAiResult()
             },
@@ -284,6 +328,18 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
             },
             isAiAnalyzing = uiState.isAiAnalyzing,
             aiResult = uiState.aiAnalysisResult
+        )
+    }
+
+    if (showEbayLoginDialog) {
+        EbayLoginDialog(
+            initialUsername = uiState.settings.ebayUsername.ifBlank { uiState.settings.connectedAccount },
+            isLoggedIn = uiState.settings.isEbayLoggedIn,
+            onLoginSuccess = { username ->
+                viewModel.recordEbayLogin(username)
+                showEbayLoginDialog = false
+            },
+            onDismiss = { showEbayLoginDialog = false }
         )
     }
 

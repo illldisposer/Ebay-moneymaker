@@ -77,7 +77,10 @@ fun DashboardScreen(
     onNavigateToOrders: () -> Unit,
     onNavigateToListings: () -> Unit,
     onNavigateToLogs: () -> Unit,
-    onToggleBotActive: (Boolean) -> Unit
+    onToggleBotActive: (Boolean) -> Unit,
+    onToggleLiveMode: (Boolean) -> Unit = {},
+    onOpenEbayLogin: () -> Unit = {},
+    onCloneOffers: (Int) -> Unit = {}
 ) {
     val dateFormatter = remember { SimpleDateFormat("HH:mm:ss", Locale.GERMANY) }
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -99,6 +102,65 @@ fun DashboardScreen(
     ) {
         item {
             Spacer(modifier = Modifier.height(6.dp))
+
+            // Test / Live Mode Banner with Direct Switch
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (uiState.settings.isLiveMode) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggleLiveMode(!uiState.settings.isLiveMode) }
+                    .testTag("dashboard_mode_card")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (uiState.settings.isLiveMode) "🔴 Live-Modus (eBay.de)" else "🧪 Test-Modus (Sandbox)",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (uiState.settings.isLiveMode) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "• Marge: ${if (uiState.settings.marginType == "PERCENTAGE") "+${uiState.settings.marginPercentage}%" else "+${String.format("%.2f", uiState.settings.marginEuro)} €"}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (uiState.settings.isLiveMode) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                        Text(
+                            text = if (uiState.settings.isLiveMode) {
+                                if (uiState.settings.isEbayLoggedIn) "Verbunden mit eBay.de als '${uiState.settings.ebayUsername}'" else "Tippen für eBay.de Web-Login"
+                            } else {
+                                "Sichere Simulation ohne echte Kosten. Schalter für Live-Modus."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (uiState.settings.isLiveMode) MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f)
+                        )
+                    }
+
+                    Switch(
+                        checked = uiState.settings.isLiveMode,
+                        onCheckedChange = { onToggleLiveMode(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.error,
+                            checkedTrackColor = MaterialTheme.colorScheme.errorContainer
+                        ),
+                        modifier = Modifier.testTag("dashboard_mode_switch")
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Bot Live Status Bar Card
             Card(
@@ -291,6 +353,20 @@ fun DashboardScreen(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Kaufabwicklung (${uiState.pendingOrderCount})")
                 }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Button(
+                onClick = { onCloneOffers(uiState.settings.autoCloneCount.takeIf { it > 0 } ?: 10) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("dashboard_clone_offers_button"),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            ) {
+                Icon(imageVector = Icons.Default.ElectricBolt, contentDescription = null)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("⚡ Top-${if (uiState.settings.autoCloneCount > 0) uiState.settings.autoCloneCount else 10} Resonanz-Angebote automatisch klonen")
             }
         }
 

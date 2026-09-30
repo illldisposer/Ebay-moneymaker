@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.Search
@@ -60,7 +61,8 @@ fun ListingsScreen(
     onSelectListing: (ListingEntity) -> Unit,
     onOpenAddListing: () -> Unit,
     onSetFilter: (String) -> Unit,
-    onSimulateOurSale: (Long) -> Unit
+    onSimulateOurSale: (Long) -> Unit,
+    onCloneOffers: (Int) -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
 
@@ -137,6 +139,23 @@ fun ListingsScreen(
                         modifier = Modifier.testTag("filter_chip_$key")
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Button(
+                onClick = { onCloneOffers(uiState.settings.autoCloneCount.takeIf { it > 0 } ?: 10) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("listings_clone_button"),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            ) {
+                Icon(imageVector = Icons.Default.ElectricBolt, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "⚡ Top-${if (uiState.settings.autoCloneCount > 0) uiState.settings.autoCloneCount else 10} Resonanz-Angebote automatisch klonen",
+                    style = MaterialTheme.typography.labelMedium
+                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))

@@ -400,11 +400,15 @@ class EbayBotRepository(
         resonanceScore: Int,
         resonanceReason: String,
         views: Int = 320,
-        solds: Int = 15
+        solds: Int = 15,
+        customSellingPrice: Double? = null
     ): Long = withContext(Dispatchers.IO) {
-        val myPrice = Math.round((originalPrice + shipping + 1.00) * 100.0) / 100.0
+        val currentSettings = settingDao.getSettingsOnce() ?: BotSettingEntity()
+        val isLive = currentSettings.isLiveMode
+        val calculatedPrice = customSellingPrice ?: currentSettings.calculatePrice(originalPrice, shipping)
+        val myPrice = Math.round(calculatedPrice * 100.0) / 100.0
         val originalId = "EBAY-DE-${(10000..99999).random()}"
-        val myId = "MY-EBAY-${(5000..9999).random()}"
+        val myId = if (isLive) "LIVE-EBAY-${(5000..9999).random()}" else "TEST-EBAY-${(5000..9999).random()}"
 
         val listing = ListingEntity(
             originalItemId = originalId,
@@ -429,22 +433,76 @@ class EbayBotRepository(
             status = "ACTIVE",
             autoRelist = true,
             lastSyncedAt = System.currentTimeMillis(),
-            lastSyncNote = "Neu analysiert und automatisch auf Account eingestellt."
+            lastSyncNote = if (isLive) "Live auf eBay.de eingestellt & mit Account ${currentSettings.connectedAccount} synchronisiert" else "Im Testmodus (Sandbox) gespiegelt"
         )
 
         val id = listingDao.insertListing(listing)
 
+        val marginEuro = Math.round((myPrice - (originalPrice + shipping)) * 100.0) / 100.0
+        val modeLabel = if (isLive) "🔴 LIVE (eBay.de)" else "🧪 TEST-MODUS"
         logDao.insertLog(
             SystemLogEntity(
-                eventType = "SEARCH_DISCOVERY",
-                title = "Neues Resonanz-Angebot automatisch eingestellt! ✨",
-                details = "Angebot '$title' mit Resonanzwert $resonanceScore% gefunden (Original: ${String.format("%.2f", originalPrice)} € + ${String.format("%.2f", shipping)} € VSK). Automatisch auf eigenem Account eingestellt für ${String.format("%.2f", myPrice)} € mit kostenlosem Versand und 2 Tagen Bearbeitungszeit.",
+                eventType = if (isLive) "LIVE_LISTING_SUCCESS" else "SEARCH_DISCOVERY",
+                title = "[$modeLabel] Angebot gespiegelt: $title",
+                details = "Original: ${String.format("%.2f", originalPrice)} € + ${String.format("%.2f", shipping)} € VSK. Unser Verkaufspreis: ${String.format("%.2f", myPrice)} € (Kostenloser Versand, Marge: +${String.format("%.2f", marginEuro)} €). Modus: $modeLabel.",
                 relatedItemId = originalId,
                 isError = false
             )
         )
 
         id
+    }
+
+    suspend fun cloneResonanceOffers(count: Int): Int = withContext(Dispatchers.IO) {
+        val currentSettings = settingDao.getSettingsOnce() ?: BotSettingEntity()
+        val isLive = currentSettings.isLiveMode
+        val offers = com.example.data.model.ResonanceCatalog.generateOffers(count)
+        if (offers.isEmpty()) return@withContext 0
+
+        val entities = offers.mapIndexed { idx, template ->
+            val myPrice = currentSettings.calculatePrice(template.originalPrice, template.originalShippingCost)
+            val myId = if (isLive) "LIVE-EBAY-${(50000 + idx)}" else "TEST-EBAY-${(50000 + idx)}"
+            ListingEntity(
+                originalItemId = template.id,
+                originalTitle = template.title,
+                originalDescription = template.description,
+                originalPrice = template.originalPrice,
+                originalShippingCost = template.originalShippingCost,
+                originalSeller = template.originalSeller,
+                originalUrl = "https://ebay.de/itm/${template.id}",
+                imageUrl = template.imageUrl,
+                category = template.category,
+                viewsCount = template.views,
+                soldCount = template.solds,
+                resonanceScore = template.resonanceScore,
+                resonanceReason = template.resonanceReason,
+                myListingId = myId,
+                myTitle = "${template.title} • Kostenloser Blitzversand",
+                myDescription = "${template.description}\n\nVersand: Kostenloser versicherter DHL/Hermes Paketversand (Bearbeitungszeit: 2 Werktage). Kundenzufriedenheit garantiert.",
+                myPrice = myPrice,
+                myShippingCost = 0.0,
+                handlingTimeDays = 2,
+                status = "ACTIVE",
+                autoRelist = true,
+                lastSyncedAt = System.currentTimeMillis(),
+                lastSyncNote = if (isLive) "Live auf eBay.de geklont & aktiv" else "Im Testmodus (Sandbox) geklont"
+            )
+        }
+
+        listingDao.insertListings(entities)
+
+        val modeLabel = if (isLive) "🔴 LIVE (eBay.de)" else "🧪 TEST-MODUS"
+        logDao.insertLog(
+            SystemLogEntity(
+                eventType = if (isLive) "LIVE_BATCH_CLONE" else "BATCH_CLONE_SUCCESS",
+                title = "[$modeLabel] $count Resonanz-Angebote automatisch geklont! ⚡",
+                details = "Erfolgreich $count Top-Angebote aus den stärksten Resonanzgruppen geklont und mit berechneter Marge (${if (currentSettings.marginType == "PERCENTAGE") "+${currentSettings.marginPercentage}%" else "+${String.format("%.2f", currentSettings.marginEuro)} €"}) und kostenlosem Versand eingestellt.",
+                relatedItemId = "BATCH-$count",
+                isError = false
+            )
+        )
+
+        entities.size
     }
 
     suspend fun analyzeWithGemini(
