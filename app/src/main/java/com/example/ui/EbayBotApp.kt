@@ -284,7 +284,9 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                         onOpenAddListing = { showAddListingDialog = true },
                         onSetFilter = { viewModel.setListingFilter(it) },
                         onSimulateOurSale = { viewModel.simulateOurSale(it) },
-                        onCloneOffers = { viewModel.cloneTopResonanceOffers(it) }
+                        onCloneOffers = { viewModel.cloneTopResonanceOffers(it) },
+                        onDeleteSelected = { viewModel.deleteSelectedListings(it) },
+                        onUpdateSelectedMargin = { ids, type, v -> viewModel.updateSelectedListingsMargin(ids, type, v) }
                     )
                     ScreenTab.ORDERS -> OrdersScreen(
                         uiState = uiState,

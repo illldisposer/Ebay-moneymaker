@@ -143,7 +143,7 @@ fun LogsScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(uiState.logs, key = { it.id }) { log ->
+                items(uiState.logs, key = { "log_${it.id}" }) { log ->
                     LogCard(log = log)
                 }
 

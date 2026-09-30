@@ -342,6 +342,20 @@ class EbayBotRepository(
             )
         )
 
+        // 4. Auto-Refill: If autoRefillOnSale is enabled, automatically create a new replacement listing instantly
+        val currentSettings = settingDao.getSettingsOnce()
+        if (currentSettings?.autoRefillOnSale == true) {
+            cloneResonanceOffers(1)
+            logDao.insertLog(
+                SystemLogEntity(
+                    eventType = "AUTO_REFILL",
+                    title = "Auto-Refill: Neuer Artikel nachgeladen! 🔄",
+                    details = "Da ein Artikel verkauft wurde, hat der Bot automatisch einen neuen Top-Resonanzartikel als Ersatz generiert und platziert.",
+                    isError = false
+                )
+            )
+        }
+
         orderDao.getOrderByIdOnce(orderId)
     }
 
@@ -537,6 +551,46 @@ class EbayBotRepository(
                 title = "Angebot gelöscht",
                 details = "Angebot ${listing.myListingId} (${listing.myTitle}) wurde aus der Datenbank und vom Account entfernt.",
                 relatedItemId = listing.originalItemId
+            )
+        )
+    }
+
+    suspend fun deleteListings(ids: List<Long>) = withContext(Dispatchers.IO) {
+        for (id in ids) {
+            listingDao.deleteListingById(id)
+        }
+        logDao.insertLog(
+            SystemLogEntity(
+                eventType = "BATCH_DELETE",
+                title = "Mehrere Anzeigen gelöscht 🗑️",
+                details = "${ids.size} ausgewählte Anzeigen wurden erfolgreich aus der App und dem eBay-Spiegelungsspeicher entfernt.",
+                isError = false
+            )
+        )
+    }
+
+    suspend fun updateListingsMargin(ids: List<Long>, marginType: String, marginValue: Double) = withContext(Dispatchers.IO) {
+        for (id in ids) {
+            val listing = listingDao.getListingByIdOnce(id) ?: continue
+            val base = listing.originalPrice + listing.originalShippingCost
+            val newPrice = if (marginType == "PERCENTAGE") {
+                Math.round(base * (1.0 + (marginValue / 100.0)) * 100.0) / 100.0
+            } else {
+                Math.round((base + marginValue) * 100.0) / 100.0
+            }
+            val updated = listing.copy(
+                myPrice = newPrice,
+                lastSyncedAt = System.currentTimeMillis(),
+                lastSyncNote = "Marge aktualisiert: ${if (marginType == "PERCENTAGE") "+$marginValue%" else "+$marginValue €"}"
+            )
+            listingDao.updateListing(updated)
+        }
+        logDao.insertLog(
+            SystemLogEntity(
+                eventType = "BATCH_MARGIN_UPDATE",
+                title = "Marge für ${ids.size} Anzeigen aktualisiert 📊",
+                details = "Neue Marge: ${if (marginType == "PERCENTAGE") "+$marginValue %" else "+$marginValue €"} für ${ids.size} ausgewählte Anzeigen berechnet und übernommen.",
+                isError = false
             )
         )
     }

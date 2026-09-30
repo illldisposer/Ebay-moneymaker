@@ -361,6 +361,20 @@ class EbayBotViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun deleteSelectedListings(ids: List<Long>) {
+        viewModelScope.launch {
+            repository.deleteListings(ids)
+            showNotification("🗑️ ${ids.size} ausgewählte Angebote erfolgreich gelöscht.", isError = false)
+        }
+    }
+
+    fun updateSelectedListingsMargin(ids: List<Long>, marginType: String, marginValue: Double) {
+        viewModelScope.launch {
+            repository.updateListingsMargin(ids, marginType, marginValue)
+            showNotification("📊 Marge für ${ids.size} Angebote erfolgreich auf ${if (marginType == "PERCENTAGE") "$marginValue%" else "$marginValue €"} aktualisiert!", isError = false)
+        }
+    }
+
     fun clearLogs() {
         viewModelScope.launch {
             repository.clearLogs()

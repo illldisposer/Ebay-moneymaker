@@ -9,11 +9,12 @@ data class BotSettingEntity(
     val id: Int = 1,
     val isBotActive: Boolean = true,
     val isLiveMode: Boolean = false, // false = Test-Modus (Simulation), true = Live-Modus (eBay.de Live)
-    val marginType: String = "FIXED_EURO", // "FIXED_EURO" or "PERCENTAGE"
+    val marginType: String = "PERCENTAGE", // Standardmäßig auf Prozentual beim ersten Start
     val marginEuro: Double = 1.00,
-    val marginPercentage: Double = 5.0,
+    val marginPercentage: Double = 5.0, // Standardmäßig auf 5% Prozent
     val autoCloneCount: Int = 10, // Einstellbar von 0 bis 1000
-    val autoCloneOnLogin: Boolean = true, // Automatisch beim Login klonen
+    val autoCloneOnLogin: Boolean = false, // Kein automatisches Klonen beim ersten Start / Login ohne Auslösung
+    val autoRefillOnSale: Boolean = true, // Wenn 1 Artikel verkauft wird, automatisch direkt neuen erstellen
     val syncIntervalSeconds: Int = 30,
     val autoBuyOnSale: Boolean = true,
     val handlingDays: Int = 2,

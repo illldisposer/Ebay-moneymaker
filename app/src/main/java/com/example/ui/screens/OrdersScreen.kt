@@ -116,7 +116,7 @@ fun OrdersScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(uiState.orders, key = { it.id }) { order ->
+                items(uiState.orders, key = { "order_${it.id}" }) { order ->
                     OrderCard(
                         order = order,
                         onClick = { onSelectOrder(order) },

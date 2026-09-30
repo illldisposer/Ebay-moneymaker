@@ -391,7 +391,7 @@ fun DashboardScreen(
             }
         }
 
-        items(uiState.listings.take(3), key = { it.id }) { listing ->
+        items(uiState.listings.take(3), key = { "dash_listing_${it.id}" }) { listing ->
             DashboardListingPreviewCard(
                 listing = listing,
                 onClick = { onSelectListing(listing) }
@@ -419,7 +419,7 @@ fun DashboardScreen(
             }
         }
 
-        items(uiState.logs.take(3), key = { it.id }) { log ->
+        items(uiState.logs.take(3), key = { "dash_log_${it.id}" }) { log ->
             DashboardLogItem(log = log)
         }
 

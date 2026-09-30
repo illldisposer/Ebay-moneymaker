@@ -16,19 +16,24 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.PriceChange
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -38,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -50,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.data.local.entity.ListingEntity
@@ -62,9 +69,13 @@ fun ListingsScreen(
     onOpenAddListing: () -> Unit,
     onSetFilter: (String) -> Unit,
     onSimulateOurSale: (Long) -> Unit,
-    onCloneOffers: (Int) -> Unit = {}
+    onCloneOffers: (Int) -> Unit = {},
+    onDeleteSelected: (List<Long>) -> Unit = {},
+    onUpdateSelectedMargin: (List<Long>, String, Double) -> Unit = { _, _, _ -> }
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var showBatchMarginDialog by remember { mutableStateOf(false) }
 
     val filteredListings = remember(uiState.listings, searchQuery) {
         if (searchQuery.isBlank()) {
@@ -158,6 +169,55 @@ fun ListingsScreen(
                 )
             }
 
+            // BATCH ACTION BAR WHEN ITEMS ARE SELECTED
+            if (selectedIds.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "${selectedIds.size} ausgewählt",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedButton(
+                                onClick = { showBatchMarginDialog = true },
+                                contentPadding = ButtonDefaults.ContentPadding
+                            ) {
+                                Icon(imageVector = Icons.Default.PriceChange, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Marge ändern", style = MaterialTheme.typography.labelSmall)
+                            }
+
+                            Button(
+                                onClick = {
+                                    onDeleteSelected(selectedIds.toList())
+                                    selectedIds = emptySet()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                contentPadding = ButtonDefaults.ContentPadding
+                            ) {
+                                Icon(imageVector = Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Löschen", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(10.dp))
 
             if (filteredListings.isEmpty()) {
@@ -177,99 +237,228 @@ fun ListingsScreen(
                         Button(onClick = onOpenAddListing) {
                             Icon(imageVector = Icons.Default.Add, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Neues Resonanz-Angebot anlegen")
+                            Text("Resonanz-Angebot spiegeln")
                         }
                     }
                 }
             } else {
                 LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filteredListings, key = { it.id }) { listing ->
-                        ListingCard(
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (selectedIds.size == filteredListings.size) "Alle abwählen" else "Alle auswählen",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .clickable {
+                                        selectedIds = if (selectedIds.size == filteredListings.size) {
+                                            emptySet()
+                                        } else {
+                                            filteredListings.map { it.id }.toSet()
+                                        }
+                                    }
+                                    .padding(4.dp)
+                            )
+                        }
+                    }
+
+                    items(filteredListings, key = { "listing_${it.id}" }) { listing ->
+                        val isSelected = selectedIds.contains(listing.id)
+                        ListingItemCard(
                             listing = listing,
+                            isSelected = isSelected,
+                            onToggleSelection = {
+                                selectedIds = if (isSelected) selectedIds - listing.id else selectedIds + listing.id
+                            },
                             onClick = { onSelectListing(listing) },
                             onQuickSale = { onSimulateOurSale(listing.id) }
                         )
                     }
 
                     item {
-                        Spacer(modifier = Modifier.height(72.dp))
+                        Spacer(modifier = Modifier.height(80.dp))
                     }
                 }
             }
         }
     }
+
+    if (showBatchMarginDialog) {
+        BatchMarginDialog(
+            onDismiss = { showBatchMarginDialog = false },
+            onConfirm = { type, value ->
+                onUpdateSelectedMargin(selectedIds.toList(), type, value)
+                selectedIds = emptySet()
+                showBatchMarginDialog = false
+            }
+        )
+    }
 }
 
 @Composable
-fun ListingCard(
+fun BatchMarginDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (marginType: String, marginValue: Double) -> Unit
+) {
+    var marginType by remember { mutableStateOf("PERCENTAGE") }
+    var valueText by remember { mutableStateOf("5.0") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Marge für ausgewählte ändern 📊", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Geben Sie die neue Marge ein, die auf alle ausgewählten gespiegelten Anzeigen angewendet werden soll:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(
+                        selected = marginType == "FIXED_EURO",
+                        onClick = {
+                            marginType = "FIXED_EURO"
+                            valueText = "1.00"
+                        },
+                        label = { Text("€ Fester Wert") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = marginType == "PERCENTAGE",
+                        onClick = {
+                            marginType = "PERCENTAGE"
+                            valueText = "5.0"
+                        },
+                        label = { Text("% Prozentual") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                OutlinedTextField(
+                    value = valueText,
+                    onValueChange = { valueText = it },
+                    label = { Text(if (marginType == "PERCENTAGE") "Prozentwert (%)" else "Euro-Wert (€)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val parsed = valueText.toDoubleOrNull() ?: 5.0
+                    onConfirm(marginType, parsed)
+                }
+            ) {
+                Text("Übernehmen")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Abbrechen")
+            }
+        }
+    )
+}
+
+@Composable
+fun ListingItemCard(
     listing: ListingEntity,
+    isSelected: Boolean,
+    onToggleSelection: () -> Unit,
     onClick: () -> Unit,
     onQuickSale: () -> Unit
 ) {
+    val statusColor = when (listing.status) {
+        "ACTIVE" -> MaterialTheme.colorScheme.primary
+        "SOLD" -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.error
+    }
+
+    val statusText = when (listing.status) {
+        "ACTIVE" -> "Aktiv (Live-Sync)"
+        "SOLD" -> "Verkauft (Bot-Kauf aktiv)"
+        "ORIGINAL_DELETED" -> "Original gelöscht (Schutz aktiv)"
+        else -> listing.status
+    }
+
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .testTag("listing_card_${listing.id}"),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(16.dp)
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            else MaterialTheme.colorScheme.surfaceVariant
+        ),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            // Header Row: Image + Title + Status
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp)
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                AsyncImage(
-                    model = listing.imageUrl,
-                    contentDescription = listing.myTitle,
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                )
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        StatusBadge(status = listing.status)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelection() }
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    AsyncImage(
+                        model = listing.imageUrl,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "🔥 ${listing.resonanceScore}% Resonanz",
-                            style = MaterialTheme.typography.labelSmall,
+                            text = listing.myTitle,
+                            style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.tertiary
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "Original: ${listing.originalSeller} • ID: ${listing.myListingId}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
 
-                    Spacer(modifier = Modifier.height(4.dp))
-
+                Surface(
+                    color = statusColor.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
                     Text(
-                        text = listing.myTitle,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2
-                    )
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    Text(
-                        text = "Original: ${listing.originalSeller} • ${listing.category}",
+                        text = statusText,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = statusColor,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Pricing & Fulfillment Matrix
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -277,25 +466,12 @@ fun ListingCard(
             ) {
                 Column {
                     Text(
-                        text = "Original Sofort-Kauf:",
+                        text = "Original: ${String.format("%.2f", listing.originalPrice)} € + ${String.format("%.2f", listing.originalShippingCost)} € VSK",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "${String.format("%.2f", listing.originalPrice)} € + ${String.format("%.2f", listing.originalShippingCost)} € VSK",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "Unser Verkaufspreis (+1€):",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "${String.format("%.2f", listing.myPrice)} € (Kostenlos VSK)",
+                        text = "➔ Unser Preis: ${String.format("%.2f", listing.myPrice)} € (Gratis Versand)",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.primary
@@ -334,7 +510,6 @@ fun ListingCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Action Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
