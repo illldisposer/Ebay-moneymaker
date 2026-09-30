@@ -1,0 +1,6 @@
+{
+  "name": "eBay Resonanz Bot",
+  "description": "Automatisierter eBay Bot für Resonanz-Suche, Sofort-Kauf Spiegelung (+1€, kostenloser Versand), Live-Statusabgleich, Auto-Kauf bei Verkauf und Abwicklung",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
