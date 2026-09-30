@@ -11,6 +11,8 @@ jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
@@ -42,14 +44,30 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace -Djava.awt.headless=true
 
+      - name: Upload to GitHub Releases (Quota-Frei)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: latest
+          name: "eBay Resonanz Bot - APK Release"
+          body: |
+            ### 📱 Aktuelle APK-Datei
+            Laden Sie die Datei **eBay-Resonanz-Bot.apk** herunter und installieren Sie sie direkt auf Ihrem Android-Gerät.
+          files: |
+            app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: eBay-Resonanz-Bot-APK
           path: app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 30
+          retention-days: 1
 
       - name: Build Summary
         run: |
           echo "### 🚀 APK erfolgreich erstellt!" >> $GITHUB_STEP_SUMMARY
-          echo "Die kompilierte Android APK (**eBay-Resonanz-Bot-APK**) kann oben unter **Artifacts** heruntergeladen werden." >> $GITHUB_STEP_SUMMARY
+          echo "Die kompilierte Android APK (**eBay-Resonanz-Bot.apk**) ist bereit zum Download." >> $GITHUB_STEP_SUMMARY
