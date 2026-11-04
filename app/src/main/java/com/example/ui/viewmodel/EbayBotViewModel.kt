@@ -3,6 +3,7 @@ package com.example.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.api.EbayItem
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.BotSettingEntity
 import com.example.data.local.entity.MatchEntity
@@ -30,6 +31,13 @@ data class BotUiState(
     val logFilter: String = "ALL",
     val notificationBanner: String? = null,
     val isErrorNotification: Boolean = false
+)
+
+data class EbayTestState(
+    val isRunning: Boolean = false,
+    val query: String = "",
+    val items: List<EbayItem> = emptyList(),
+    val error: String? = null
 )
 
 class EbayBotViewModel(application: Application) : AndroidViewModel(application) {
@@ -125,6 +133,27 @@ class EbayBotViewModel(application: Application) : AndroidViewModel(application)
 
     fun stopScan() {
         scanJob?.cancel()
+    }
+
+    private val _ebayTest = MutableStateFlow(EbayTestState())
+    val ebayTest: StateFlow<EbayTestState> = _ebayTest
+
+    fun runEbayTest(query: String) {
+        if (_ebayTest.value.isRunning || query.isBlank()) return
+        viewModelScope.launch {
+            _ebayTest.value = EbayTestState(isRunning = true, query = query.trim())
+            try {
+                val items = repository.ebayOnlySearch(query)
+                _ebayTest.value = EbayTestState(query = query.trim(), items = items,
+                    error = if (items.isEmpty()) "Keine Treffer für „${query.trim()}“." else null)
+            } catch (e: Exception) {
+                _ebayTest.value = EbayTestState(query = query.trim(), error = e.message ?: "Unbekannter Fehler")
+            }
+        }
+    }
+
+    fun clearEbayTest() {
+        _ebayTest.value = EbayTestState()
     }
 
     fun decideMatch(id: Long, keep: Boolean) {

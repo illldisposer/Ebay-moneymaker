@@ -72,6 +72,7 @@ enum class ScreenTab(val title: String, val icon: ImageVector) {
 @Composable
 fun EbayBotApp(viewModel: EbayBotViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val ebayTest by viewModel.ebayTest.collectAsStateWithLifecycle()
     var currentTab by remember { mutableStateOf(ScreenTab.SCANNER) }
 
     // Auto dismiss notification banner after 5 seconds
@@ -237,7 +238,10 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                         onRejectMatch = { viewModel.decideMatch(it, keep = false) },
                         onClearResults = { viewModel.clearUndecided() },
                         onOpenSettings = { currentTab = ScreenTab.SETTINGS },
-                        onOpenReview = { currentTab = ScreenTab.REVIEW }
+                        onOpenReview = { currentTab = ScreenTab.REVIEW },
+                        ebayTest = ebayTest,
+                        onRunEbayTest = { viewModel.runEbayTest(it) },
+                        onClearEbayTest = { viewModel.clearEbayTest() }
                     )
                     ScreenTab.REVIEW -> ReviewScreen(
                         uiState = uiState,

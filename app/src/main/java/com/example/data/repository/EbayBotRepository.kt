@@ -373,6 +373,22 @@ class EbayBotRepository(
         text
     }
 
+    /** Reine eBay-Testsuche ohne AliExpress – Ergebnisse gehen in die Liste und ins Protokoll. */
+    suspend fun ebayOnlySearch(query: String): List<EbayItem> = withContext(Dispatchers.IO) {
+        val s = settingDao.getSettingsOnce() ?: BotSettingEntity()
+        try {
+            val items = ebay.search(s, query = query.trim(), limit = 20)
+            val lines = items.joinToString("\n") { item ->
+                "• ${item.title.take(70)} – ${String.format(java.util.Locale.GERMANY, "%.2f", item.price + item.shipping)} € (inkl. ${String.format(java.util.Locale.GERMANY, "%.2f", item.shipping)} € Versand)"
+            }
+            log("SCAN", "eBay-Testsuche „${query.trim()}“", "${items.size} Treffer" + if (lines.isNotBlank()) "\n$lines" else "")
+            items
+        } catch (e: Exception) {
+            log("ERROR", "eBay-Testsuche fehlgeschlagen", "„${query.trim()}“: ${e.message}", isError = true)
+            throw e
+        }
+    }
+
     suspend fun updateSettings(settings: BotSettingEntity) = withContext(Dispatchers.IO) {
         settingDao.insertOrUpdate(settings)
         val now = System.currentTimeMillis()

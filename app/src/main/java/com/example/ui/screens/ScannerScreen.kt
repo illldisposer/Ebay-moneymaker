@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -29,6 +31,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -47,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.example.data.api.EbayItem
 import com.example.data.local.entity.MatchEntity
 import com.example.data.local.entity.bestAliLink
 import com.example.data.local.entity.ebayTotal
@@ -55,6 +59,7 @@ import com.example.data.local.entity.priceDiffPercent
 import com.example.ui.theme.DangerRed
 import com.example.ui.theme.SuccessGreen
 import com.example.ui.viewmodel.BotUiState
+import com.example.ui.viewmodel.EbayTestState
 import java.util.Locale
 
 fun formatEuro(value: Double): String = String.format(Locale.GERMANY, "%.2f €", value)
@@ -67,11 +72,15 @@ fun ScannerScreen(
     onRejectMatch: (Long) -> Unit,
     onClearResults: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenReview: () -> Unit
+    onOpenReview: () -> Unit,
+    ebayTest: EbayTestState = EbayTestState(),
+    onRunEbayTest: (String) -> Unit = {},
+    onClearEbayTest: () -> Unit = {}
 ) {
     val settings = uiState.settings
     val keysMissing = !settings.hasEbayKeys() || !settings.hasAliKeys()
     var showClearConfirm by remember { mutableStateOf(false) }
+    var ebayQuery by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -172,7 +181,60 @@ fun ScannerScreen(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        if (uiState.matches.isEmpty()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                OutlinedTextField(
+                    value = ebayQuery,
+                    onValueChange = { ebayQuery = it },
+                    label = { Text("Suchbegriff für eBay-Test") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { onRunEbayTest(ebayQuery) },
+                        enabled = settings.hasEbayKeys() && ebayQuery.isNotBlank() && !ebayTest.isRunning,
+                        modifier = Modifier.weight(1f).testTag("ebay_test_button")
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (ebayTest.isRunning) "Sucht …" else "Nur eBay testen")
+                    }
+                    if (ebayTest.items.isNotEmpty() || ebayTest.error != null) {
+                        TextButton(onClick = onClearEbayTest) { Text("Schließen") }
+                    }
+                }
+                if (ebayTest.isRunning) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                ebayTest.error?.let {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        if (ebayTest.items.isNotEmpty()) {
+            Text(
+                text = "eBay-Test „${ebayTest.query}“: ${ebayTest.items.size} Treffer",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+                items(ebayTest.items) { item ->
+                    EbayTestCard(item = item)
+                }
+                item { Spacer(modifier = Modifier.height(30.dp)) }
+            }
+        } else if (uiState.matches.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize().padding(top = 60.dp), contentAlignment = Alignment.TopCenter) {
                 Text(
                     text = "Noch keine sicheren Treffer. Starte einen Scan.",
@@ -278,6 +340,42 @@ fun MatchCard(match: MatchEntity, onReject: () -> Unit) {
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) { Text("Falsch", style = MaterialTheme.typography.labelSmall) }
+            }
+        }
+    }
+}
+
+@Composable
+fun EbayTestCard(item: EbayItem) {
+    val uriHandler = LocalUriHandler.current
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { runCatching { uriHandler.openUri(item.itemUrl) } },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            ProductThumb(url = item.imageUrl, label = "eBay", sizeDp = 56)
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = formatEuro(item.price + item.shipping),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    text = "Preis ${formatEuro(item.price)} + Versand ${formatEuro(item.shipping)}" +
+                        if (item.condition.isNotBlank()) " · ${item.condition}" else "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
