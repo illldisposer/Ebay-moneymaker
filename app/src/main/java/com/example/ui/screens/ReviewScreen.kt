@@ -118,7 +118,7 @@ fun ReviewCard(match: MatchEntity, onKeep: () -> Unit, onReject: () -> Unit) {
                     imageUrl = match.ebayImageUrl,
                     title = match.ebayTitle,
                     price = formatEuro(match.ebayTotal()) + " inkl. Versand",
-                    extra = match.ebaySeller,
+                    extra = match.ebayCondition,
                     onOpen = { runCatching { uriHandler.openUri(match.ebayItemUrl) } }
                 )
             }

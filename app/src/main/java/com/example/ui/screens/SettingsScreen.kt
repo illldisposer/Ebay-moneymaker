@@ -63,8 +63,6 @@ fun SettingsScreen(
     var aliAppKey by remember(s.aliAppKey) { mutableStateOf(s.aliAppKey) }
     var aliAppSecret by remember(s.aliAppSecret) { mutableStateOf(s.aliAppSecret) }
     var aliTrackingId by remember(s.aliTrackingId) { mutableStateOf(s.aliTrackingId) }
-    var geminiKey by remember(s.geminiApiKey) { mutableStateOf(s.geminiApiKey) }
-    var geminiModel by remember(s.geminiModel) { mutableStateOf(s.geminiModel) }
     var keywords by remember(s.searchKeywords) { mutableStateOf(s.searchKeywords) }
     var productsPerKeyword by remember(s.productsPerKeyword) { mutableFloatStateOf(s.productsPerKeyword.toFloat()) }
     var candidates by remember(s.ebayCandidatesPerProduct) { mutableFloatStateOf(s.ebayCandidatesPerProduct.toFloat()) }
@@ -100,11 +98,6 @@ fun SettingsScreen(
             KeyField("Tracking-ID", aliTrackingId, secret = false, tag = "ali_tracking_id") { aliTrackingId = it }
         }
 
-        SettingsSection("Gemini (KI-Bildvergleich)") {
-            KeyField("API-Key (leer = Schlüssel aus Build)", geminiKey, secret = true, tag = "gemini_key") { geminiKey = it }
-            KeyField("Modell", geminiModel, secret = false, tag = "gemini_model") { geminiModel = it }
-        }
-
         SettingsSection("Scan") {
             OutlinedTextField(
                 value = keywords,
@@ -122,7 +115,7 @@ fun SettingsScreen(
             SliderRow("Mindest-Sicherheit (darunter verworfen)", minConfidence, 20f..80f, 11, suffix = " %") { minConfidence = it }
             SliderRow("Auto-Schwelle (ab hier sicher)", autoConfidence, 50f..99f, 48, suffix = " %") { autoConfidence = it }
             Text(
-                text = "Zwischen beiden Werten landen Treffer in „Prüfen“.",
+                text = "Zwischen beiden Werten landen Treffer in „Prüfen“. Die Zuordnung läuft lokal auf dem Gerät (Titelvergleich + Bild-Fingerabdruck), es gehen keine Daten an Dritte.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -143,8 +136,6 @@ fun SettingsScreen(
                         aliAppKey = aliAppKey.trim(),
                         aliAppSecret = aliAppSecret.trim(),
                         aliTrackingId = aliTrackingId.trim(),
-                        geminiApiKey = geminiKey.trim(),
-                        geminiModel = geminiModel.trim().ifBlank { "gemini-flash-latest" },
                         searchKeywords = keywords,
                         productsPerKeyword = productsPerKeyword.roundToInt(),
                         ebayCandidatesPerProduct = candidates.roundToInt(),

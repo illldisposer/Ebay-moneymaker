@@ -17,7 +17,7 @@ import com.example.data.local.entity.SystemLogEntity
         SystemLogEntity::class,
         BotSettingEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

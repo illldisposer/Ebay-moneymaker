@@ -4,22 +4,28 @@ import com.example.data.api.AliExpressClient
 import com.example.data.api.AliProduct
 import com.example.data.api.EbayBrowseClient
 import com.example.data.api.EbayItem
-import com.example.data.gemini.GeminiApiException
-import com.example.data.gemini.GeminiResonanceService
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.BotSettingEntity
 import com.example.data.local.entity.MatchEntity
 import com.example.data.local.entity.SystemLogEntity
+import com.example.data.matching.ImageFingerprint
 import com.example.data.matching.ProductMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.coroutineContext
+import kotlin.math.roundToInt
 
 data class ScanResult(
     val productsChecked: Int,
@@ -32,8 +38,7 @@ data class ScanResult(
 )
 
 class EbayBotRepository(
-    private val database: AppDatabase,
-    private val geminiService: GeminiResonanceService = GeminiResonanceService()
+    private val database: AppDatabase
 ) {
     private val matchDao = database.matchDao()
     private val logDao = database.systemLogDao()
@@ -45,6 +50,7 @@ class EbayBotRepository(
         .build()
     private val ebay = EbayBrowseClient(http)
     private val ali = AliExpressClient(http)
+    private val fingerprint = ImageFingerprint(http)
 
     val scannerMatches: Flow<List<MatchEntity>> = matchDao.getScannerMatches()
     val reviewQueue: Flow<List<MatchEntity>> = matchDao.getReviewQueue()
@@ -73,9 +79,52 @@ class EbayBotRepository(
         )
     }
 
+    private data class CandidateScore(
+        val item: EbayItem,
+        val confidence: Int,
+        val method: String,
+        val reason: String
+    )
+
     /**
-     * Scan: AliExpress-Produkte je Suchbegriff holen, passendes eBay-Angebot suchen,
-     * zuordnen (EAN → KI-Bildvergleich → Titelvergleich) und als AUTO / REVIEW speichern.
+     * Konfidenz für ein Kandidaten-Paar – komplett lokal: Titelvergleich + Bild-Fingerabdruck (dHash).
+     * Fast identische Produktbilder (≤ 6 von 64 Bit Abweichung) gelten mit passendem Titel als sicher.
+     */
+    private fun scoreCandidate(product: AliProduct, aliHash: Long?, item: EbayItem, textScore: Int): CandidateScore {
+        val ebayHash = if (aliHash != null) fingerprint.hashOf(item.imageUrl) else null
+        if (aliHash == null || ebayHash == null) {
+            return CandidateScore(
+                item,
+                minOf(textScore, 70),
+                "Titelvergleich",
+                "Titel-Ähnlichkeit $textScore % (Bild nicht ladbar)"
+            )
+        }
+        val distance = ImageFingerprint.hammingDistance(aliHash, ebayHash)
+        val imageScore = ImageFingerprint.imageScore(aliHash, ebayHash)
+        return if (distance <= 6) {
+            val confidence = if (textScore >= 20) 88 + minOf(11, textScore / 9) else 78
+            CandidateScore(
+                item,
+                confidence,
+                "Bild-Fingerabdruck",
+                "Nahezu identisches Produktbild ($distance/64 Bit Abweichung) · Titel-Ähnlichkeit $textScore %"
+            )
+        } else {
+            CandidateScore(
+                item,
+                minOf(80, (0.5 * textScore + 0.5 * imageScore).roundToInt()),
+                "Bild + Titel",
+                "Bild-Ähnlichkeit $imageScore % · Titel-Ähnlichkeit $textScore %"
+            )
+        }
+    }
+
+    /**
+     * Scan: AliExpress-Produkte je Suchbegriff holen, passende eBay-Angebote suchen,
+     * lokal zuordnen (EAN → Bild-Fingerabdruck + Titel → Titel) und als AUTO / REVIEW speichern.
+     * AliExpress-Daten verlassen dabei das Gerät nicht in Richtung Dritter.
+     * Bis zu 3 Produkte werden parallel verarbeitet.
      */
     suspend fun runScan(onProgress: (String) -> Unit): ScanResult = withContext(Dispatchers.IO) {
         val s = settingDao.getSettingsOnce() ?: BotSettingEntity()
@@ -84,16 +133,15 @@ class EbayBotRepository(
         val keywords = s.keywordList()
         if (keywords.isEmpty()) throw IllegalStateException("Keine Suchbegriffe hinterlegt.")
 
-        val geminiKey = geminiService.resolveApiKey(s.geminiApiKey)
-        var geminiDisabledReason: String? = if (geminiKey == null) "kein Gemini-Schlüssel" else null
-
-        var checked = 0
-        var autoCount = 0
-        var reviewCount = 0
-        var discarded = 0
-        var updated = 0
-        var errors = 0
-        var consecutiveErrors = 0
+        fingerprint.clearCache()
+        val checked = AtomicInteger(0)
+        val autoCount = AtomicInteger(0)
+        val reviewCount = AtomicInteger(0)
+        val discarded = AtomicInteger(0)
+        val updated = AtomicInteger(0)
+        val errors = AtomicInteger(0)
+        val consecutiveErrors = AtomicInteger(0)
+        val parallel = Semaphore(3)
 
         log("SCAN", "Scan gestartet", "Suchbegriffe: ${keywords.joinToString(", ")} · ${s.productsPerKeyword} Produkte je Begriff · Auto-Schwelle ${s.autoAcceptConfidence} %")
 
@@ -102,171 +150,151 @@ class EbayBotRepository(
             onProgress("AliExpress: „$keyword“ …")
 
             val products: List<AliProduct> = try {
-                ali.searchProducts(s, keyword, s.productsPerKeyword).also { consecutiveErrors = 0 }
+                ali.searchProducts(s, keyword, s.productsPerKeyword).also { consecutiveErrors.set(0) }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                errors++
-                consecutiveErrors++
+                errors.incrementAndGet()
                 log("ERROR", "AliExpress-Suche fehlgeschlagen", "„$keyword“: ${e.message}", isError = true)
-                if (consecutiveErrors >= 5) throw IllegalStateException("Scan abgebrochen nach 5 Fehlern in Folge. Letzter: ${e.message}")
+                if (consecutiveErrors.incrementAndGet() >= 5) throw IllegalStateException("Scan abgebrochen nach 5 Fehlern in Folge. Letzter: ${e.message}")
                 continue
             }
 
-            products.forEachIndexed { index, product ->
-                coroutineContext.ensureActive()
-                checked++
-                onProgress("„$keyword“ ${index + 1}/${products.size}: ${product.title.take(40)}")
-
-                try {
-                    // 1) eBay-Kandidaten: exakt per EAN, sonst per Suchbegriff (mit kürzerem Fallback)
-                    val gtin = ProductMatcher.extractGtin(product.title)
-                    var candidates: List<EbayItem> = emptyList()
-                    var viaGtin = false
-                    if (gtin != null) {
-                        candidates = ebay.search(s, gtin = gtin, limit = s.ebayCandidatesPerProduct)
-                        viaGtin = candidates.isNotEmpty()
-                    }
-                    if (candidates.isEmpty()) {
-                        val query = ProductMatcher.buildSearchQuery(product.title, 7)
-                        if (query.isNotBlank()) candidates = ebay.search(s, query = query, limit = s.ebayCandidatesPerProduct)
-                        if (candidates.isEmpty()) {
-                            val shortQuery = ProductMatcher.buildSearchQuery(product.title, 4)
-                            if (shortQuery.isNotBlank() && shortQuery != query) {
-                                candidates = ebay.search(s, query = shortQuery, limit = s.ebayCandidatesPerProduct)
-                            }
-                        }
-                    }
-                    consecutiveErrors = 0
-                    if (candidates.isEmpty()) {
-                        discarded++
-                        return@forEachIndexed
-                    }
-
-                    // 2) Besten Kandidaten per Titel-Ähnlichkeit wählen
-                    val scored = candidates.map { it to ProductMatcher.titleSimilarity(product.title, it.title) }
-                        .sortedByDescending { it.second }
-                    val (best, textScore) = scored.first()
-                    val pairKey = "ali:${product.productId}|ebay:${best.itemId}"
-
-                    // 3) Bekanntes Paar: Entscheidung respektieren, nur Preise aktualisieren
-                    val existing = matchDao.getByPairKey(pairKey)
-                    if (existing != null) {
-                        if (existing.status != "REJECTED") {
-                            matchDao.update(
-                                existing.copy(
-                                    aliPrice = product.price,
-                                    aliOriginalPrice = product.originalPrice,
-                                    aliAffiliateUrl = product.affiliateUrl.ifBlank { existing.aliAffiliateUrl },
-                                    aliSalesVolume = product.salesVolume,
-                                    ebayPrice = best.price,
-                                    ebayShipping = best.shipping,
-                                    ebayCandidateCount = candidates.size,
-                                    updatedAt = System.currentTimeMillis()
-                                )
-                            )
-                            updated++
-                        }
-                        return@forEachIndexed
-                    }
-
-                    // 4) Konfidenz bestimmen
-                    var method: String
-                    var confidence: Int
-                    var reason: String
-                    if (viaGtin) {
-                        method = "EAN"
-                        confidence = 99
-                        reason = "Identische EAN $gtin"
-                    } else if (textScore < 15) {
-                        discarded++
-                        return@forEachIndexed
-                    } else {
-                        val ai = if (geminiDisabledReason == null) {
+            val done = AtomicInteger(0)
+            coroutineScope {
+                products.map { product ->
+                    async {
+                        parallel.withPermit {
+                            coroutineContext.ensureActive()
+                            checked.incrementAndGet()
                             try {
-                                geminiService.compareProducts(
-                                    apiKey = geminiKey,
-                                    model = s.geminiModel,
-                                    aliTitle = product.title,
-                                    aliImageUrl = product.imageUrl,
-                                    ebayTitle = best.title,
-                                    ebayImageUrl = best.imageUrl
-                                )
-                            } catch (e: GeminiApiException) {
-                                geminiDisabledReason = e.message
-                                log("ERROR", "KI-Bildvergleich abgeschaltet", "${e.message} – restlicher Scan nur mit Titelvergleich.", isError = true)
-                                null
+                                when (processProduct(s, keyword, product)) {
+                                    ProductOutcome.AUTO -> autoCount.incrementAndGet()
+                                    ProductOutcome.REVIEW -> reviewCount.incrementAndGet()
+                                    ProductOutcome.UPDATED -> updated.incrementAndGet()
+                                    ProductOutcome.DISCARDED -> discarded.incrementAndGet()
+                                }
+                                consecutiveErrors.set(0)
+                            } catch (e: Exception) {
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+                                errors.incrementAndGet()
+                                log("ERROR", "Fehler bei Produkt", "${product.title.take(60)}: ${e.message}", relatedId = product.productId, isError = true)
+                                if (consecutiveErrors.incrementAndGet() >= 5) throw IllegalStateException("Scan abgebrochen nach 5 Fehlern in Folge. Letzter: ${e.message}")
                             }
-                        } else null
-
-                        if (ai != null) {
-                            method = "KI-Bildvergleich"
-                            confidence = ai.confidence
-                            reason = "${ai.reason} · Titel-Ähnlichkeit $textScore %"
-                        } else {
-                            // Ohne KI nie automatisch "sicher": max. 70 % → landet in "Prüfen"
-                            method = "Titelvergleich"
-                            confidence = minOf(textScore, 70)
-                            reason = "Titel-Ähnlichkeit $textScore %" + (geminiDisabledReason?.let { " (ohne KI: $it)" } ?: "")
+                            onProgress("„$keyword“ ${done.incrementAndGet()}/${products.size}: ${product.title.take(40)}")
                         }
                     }
-
-                    if (confidence < s.minConfidence) {
-                        discarded++
-                        return@forEachIndexed
-                    }
-                    val status = if (confidence >= s.autoAcceptConfidence) "AUTO" else "REVIEW"
-
-                    val inserted = matchDao.insert(
-                        MatchEntity(
-                            pairKey = pairKey,
-                            keyword = keyword,
-                            aliProductId = product.productId,
-                            aliTitle = product.title,
-                            aliPrice = product.price,
-                            aliOriginalPrice = product.originalPrice,
-                            aliCurrency = product.currency,
-                            aliImageUrl = product.imageUrl,
-                            aliProductUrl = product.productUrl,
-                            aliAffiliateUrl = product.affiliateUrl,
-                            aliSalesVolume = product.salesVolume,
-                            aliCommissionRate = product.commissionRate,
-                            aliCategory = product.category,
-                            ebayItemId = best.itemId,
-                            ebayTitle = best.title,
-                            ebayPrice = best.price,
-                            ebayShipping = best.shipping,
-                            ebayCurrency = best.currency,
-                            ebayImageUrl = best.imageUrl,
-                            ebayItemUrl = best.itemUrl,
-                            ebaySeller = best.seller,
-                            ebayCondition = best.condition,
-                            ebayCandidateCount = candidates.size,
-                            matchMethod = method,
-                            confidence = confidence,
-                            matchReason = reason,
-                            status = status
-                        )
-                    )
-                    if (inserted > 0) {
-                        if (status == "AUTO") autoCount++ else reviewCount++
-                    }
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    errors++
-                    consecutiveErrors++
-                    log("ERROR", "Fehler bei Produkt", "${product.title.take(60)}: ${e.message}", relatedId = product.productId, isError = true)
-                    if (consecutiveErrors >= 5) throw IllegalStateException("Scan abgebrochen nach 5 Fehlern in Folge. Letzter: ${e.message}")
-                }
+                }.awaitAll()
             }
         }
 
         settingDao.insertOrUpdate((settingDao.getSettingsOnce() ?: s).copy(lastScanRun = System.currentTimeMillis()))
 
-        val message = "$checked geprüft · $autoCount sicher · $reviewCount zum Prüfen · $updated aktualisiert · $discarded verworfen" +
-            if (errors > 0) " · $errors Fehler" else ""
+        val message = "${checked.get()} geprüft · ${autoCount.get()} sicher · ${reviewCount.get()} zum Prüfen · ${updated.get()} aktualisiert · ${discarded.get()} verworfen" +
+            if (errors.get() > 0) " · ${errors.get()} Fehler" else ""
         log("MATCH", "Scan beendet", message, isError = false)
-        ScanResult(checked, autoCount, reviewCount, discarded, updated, errors, message)
+        ScanResult(checked.get(), autoCount.get(), reviewCount.get(), discarded.get(), updated.get(), errors.get(), message)
     }
+
+    private enum class ProductOutcome { AUTO, REVIEW, UPDATED, DISCARDED }
+
+    private suspend fun processProduct(s: BotSettingEntity, keyword: String, product: AliProduct): ProductOutcome {
+        // 1) eBay-Kandidaten: exakt per EAN, sonst per Suchbegriff (mit kürzerem Fallback)
+        val gtin = ProductMatcher.extractGtin(product.title)
+        var candidates: List<EbayItem> = emptyList()
+        var viaGtin = false
+        if (gtin != null) {
+            candidates = ebay.search(s, gtin = gtin, limit = s.ebayCandidatesPerProduct)
+            viaGtin = candidates.isNotEmpty()
+        }
+        if (candidates.isEmpty()) {
+            val query = ProductMatcher.buildSearchQuery(product.title, 7)
+            if (query.isNotBlank()) candidates = ebay.search(s, query = query, limit = s.ebayCandidatesPerProduct)
+            if (candidates.isEmpty()) {
+                val shortQuery = ProductMatcher.buildSearchQuery(product.title, 4)
+                if (shortQuery.isNotBlank() && shortQuery != query) {
+                    candidates = ebay.search(s, query = shortQuery, limit = s.ebayCandidatesPerProduct)
+                }
+            }
+        }
+        if (candidates.isEmpty()) return ProductOutcome.DISCARDED
+
+        // 2) Bekannte Paare: Entscheidung respektieren – offenes/behaltenes Paar nur aktualisieren, aussortierte ignorieren
+        val open = mutableListOf<EbayItem>()
+        for (item in candidates) {
+            val existing = matchDao.getByPairKey(pairKeyOf(product, item))
+            when {
+                existing == null -> open.add(item)
+                existing.status == "REJECTED" -> Unit
+                else -> {
+                    matchDao.update(
+                        existing.copy(
+                            aliPrice = product.price,
+                            aliOriginalPrice = product.originalPrice,
+                            aliAffiliateUrl = product.affiliateUrl.ifBlank { existing.aliAffiliateUrl },
+                            aliSalesVolume = product.salesVolume,
+                            ebayPrice = item.price,
+                            ebayShipping = item.shipping,
+                            ebayCandidateCount = candidates.size,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                    return ProductOutcome.UPDATED
+                }
+            }
+        }
+        if (open.isEmpty()) return ProductOutcome.DISCARDED
+
+        // 3) Bewerten: EAN-Treffer sofort sicher, sonst Top-3 nach Titel lokal per Bild prüfen
+        val best: CandidateScore = if (viaGtin) {
+            CandidateScore(open.first(), 99, "EAN", "Identische EAN $gtin")
+        } else {
+            val byText = open.map { it to ProductMatcher.titleSimilarity(product.title, it.title) }
+                .sortedByDescending { it.second }
+                .take(3)
+            val aliHash = fingerprint.hashOf(product.imageUrl)
+            byText.map { (item, text) -> scoreCandidate(product, aliHash, item, text) }
+                .maxByOrNull { it.confidence } ?: return ProductOutcome.DISCARDED
+        }
+
+        if (best.confidence < s.minConfidence) return ProductOutcome.DISCARDED
+        val status = if (best.confidence >= s.autoAcceptConfidence) "AUTO" else "REVIEW"
+        val item = best.item
+
+        val inserted = matchDao.insert(
+            MatchEntity(
+                pairKey = pairKeyOf(product, item),
+                keyword = keyword,
+                aliProductId = product.productId,
+                aliTitle = product.title,
+                aliPrice = product.price,
+                aliOriginalPrice = product.originalPrice,
+                aliCurrency = product.currency,
+                aliImageUrl = product.imageUrl,
+                aliProductUrl = product.productUrl,
+                aliAffiliateUrl = product.affiliateUrl,
+                aliSalesVolume = product.salesVolume,
+                aliCommissionRate = product.commissionRate,
+                aliCategory = product.category,
+                ebayItemId = item.itemId,
+                ebayTitle = item.title,
+                ebayPrice = item.price,
+                ebayShipping = item.shipping,
+                ebayCurrency = item.currency,
+                ebayImageUrl = item.imageUrl,
+                ebayItemUrl = item.itemUrl,
+                ebayCondition = item.condition,
+                ebayCandidateCount = candidates.size,
+                matchMethod = best.method,
+                confidence = best.confidence,
+                matchReason = best.reason,
+                status = status
+            )
+        )
+        if (inserted <= 0) return ProductOutcome.UPDATED
+        return if (status == "AUTO") ProductOutcome.AUTO else ProductOutcome.REVIEW
+    }
+
+    private fun pairKeyOf(product: AliProduct, item: EbayItem): String = "ali:${product.productId}|ebay:${item.itemId}"
 
     /** Entscheidung aus "Prüfen" (oder "Falsch zugeordnet" im Scanner). */
     suspend fun decideMatch(id: Long, keep: Boolean): String? = withContext(Dispatchers.IO) {
@@ -338,11 +366,7 @@ class EbayBotRepository(
             anyError = true
             "AliExpress: ${e.message}"
         }
-        lines += if (geminiService.resolveApiKey(s.geminiApiKey) != null) {
-            "Gemini: Schlüssel vorhanden (Modell ${s.geminiModel}) – wird beim Scan geprüft."
-        } else {
-            "Gemini: kein Schlüssel – Zuordnung nur per Titelvergleich, alles landet in „Prüfen“."
-        }
+        lines += "Zuordnung: lokal auf dem Gerät (Titelvergleich + Bild-Fingerabdruck), keine Weitergabe an Dritte."
 
         val text = lines.joinToString("\n")
         log("CONNECTION", "Verbindungstest", text, isError = anyError)
