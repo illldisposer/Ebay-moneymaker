@@ -18,11 +18,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.ListAlt
-import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.FactCheck
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.ViewHeadline
 import androidx.compose.material3.Badge
@@ -36,8 +37,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -55,25 +54,16 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.ui.graphics.Color
-import com.example.ui.screens.EbayLoginDialog
-import com.example.data.local.entity.ListingEntity
-import com.example.data.local.entity.OrderEntity
-import com.example.ui.screens.AddListingDialog
-import com.example.ui.screens.DashboardScreen
-import com.example.ui.screens.ListingDetailDialog
-import com.example.ui.screens.ListingsScreen
 import com.example.ui.screens.LogsScreen
-import com.example.ui.screens.OrderFulfillmentDialog
-import com.example.ui.screens.OrdersScreen
+import com.example.ui.screens.ReviewScreen
+import com.example.ui.screens.ScannerScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.viewmodel.EbayBotViewModel
 import kotlinx.coroutines.delay
 
 enum class ScreenTab(val title: String, val icon: ImageVector) {
-    DASHBOARD("Dashboard", Icons.Default.Dashboard),
-    LISTINGS("Angebote", Icons.Default.ListAlt),
-    ORDERS("Bestellungen", Icons.Default.ReceiptLong),
+    SCANNER("Scanner", Icons.Default.Radar),
+    REVIEW("Prüfen", Icons.AutoMirrored.Filled.FactCheck),
     LOGS("Protokoll", Icons.Default.ViewHeadline),
     SETTINGS("Einstellungen", Icons.Default.Settings)
 }
@@ -82,14 +72,7 @@ enum class ScreenTab(val title: String, val icon: ImageVector) {
 @Composable
 fun EbayBotApp(viewModel: EbayBotViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var currentTab by remember { mutableStateOf(ScreenTab.DASHBOARD) }
-
-    var selectedListingForDetail by remember { mutableStateOf<ListingEntity?>(null) }
-    var selectedOrderForFulfillment by remember { mutableStateOf<OrderEntity?>(null) }
-    var showAddListingDialog by remember { mutableStateOf(false) }
-    var showEbayLoginDialog by remember { mutableStateOf(false) }
-
-    val snackbarHostState = remember { SnackbarHostState() }
+    var currentTab by remember { mutableStateOf(ScreenTab.SCANNER) }
 
     // Auto dismiss notification banner after 5 seconds
     LaunchedEffect(uiState.notificationBanner) {
@@ -105,7 +88,7 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Default.Sync,
+                            imageVector = Icons.Default.Radar,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier
@@ -120,46 +103,31 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                     }
                 },
                 actions = {
-                    // Mode Toggle Badge Button
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (uiState.settings.isLiveMode) MaterialTheme.colorScheme.errorContainer
-                                else MaterialTheme.colorScheme.tertiaryContainer
+                    if (uiState.settings.ebayUseSandbox) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.tertiaryContainer)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("topbar_sandbox_badge")
+                        ) {
+                            Text(
+                                text = "🧪 SANDBOX",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
                             )
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                            .testTag("topbar_mode_badge")
-                    ) {
-                        Text(
-                            text = if (uiState.settings.isLiveMode) "🔴 LIVE" else "🧪 TEST",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (uiState.settings.isLiveMode) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer
-                        )
-                    }
-
-                    // eBay Web Login Button
-                    IconButton(
-                        onClick = { showEbayLoginDialog = true },
-                        modifier = Modifier.testTag("topbar_ebay_login_button")
-                    ) {
-                        Icon(
-                            imageVector = if (uiState.settings.isEbayLoggedIn) Icons.Default.ReceiptLong else Icons.Default.Settings,
-                            contentDescription = "eBay Login",
-                            tint = if (uiState.settings.isEbayLoggedIn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        }
                     }
 
                     IconButton(
-                        onClick = { viewModel.performLiveSyncCycle() },
-                        enabled = !uiState.isSyncing,
-                        modifier = Modifier.testTag("topbar_sync_button")
+                        onClick = { if (uiState.isScanning) viewModel.stopScan() else viewModel.startScan() },
+                        modifier = Modifier.testTag("topbar_scan_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Sync,
-                            contentDescription = "Sync",
-                            tint = if (uiState.isSyncing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            imageVector = if (uiState.isScanning) Icons.Default.Stop else Icons.Default.PlayArrow,
+                            contentDescription = if (uiState.isScanning) "Scan stoppen" else "Scan starten",
+                            tint = if (uiState.isScanning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         )
                     }
                 },
@@ -178,10 +146,10 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                         selected = currentTab == tab,
                         onClick = { currentTab = tab },
                         icon = {
-                            if (tab == ScreenTab.ORDERS && uiState.pendingOrderCount > 0) {
+                            if (tab == ScreenTab.REVIEW && uiState.reviewCount > 0) {
                                 BadgedBox(
                                     badge = {
-                                        Badge { Text("${uiState.pendingOrderCount}") }
+                                        Badge { Text("${uiState.reviewCount}") }
                                     }
                                 ) {
                                     Icon(imageVector = tab.icon, contentDescription = tab.title)
@@ -195,8 +163,7 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                     )
                 }
             }
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        }
     ) { innerPadding ->
         Box(
             modifier = Modifier
@@ -204,7 +171,7 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                 .padding(innerPadding)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Live Notification Banner
+                // Notification Banner
                 AnimatedVisibility(
                     visible = uiState.notificationBanner != null,
                     enter = slideInVertically() + fadeIn(),
@@ -263,35 +230,19 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
 
                 // Main Tab Content
                 when (currentTab) {
-                    ScreenTab.DASHBOARD -> DashboardScreen(
+                    ScreenTab.SCANNER -> ScannerScreen(
                         uiState = uiState,
-                        onSyncNow = { viewModel.performLiveSyncCycle() },
-                        onOpenAddListing = { showAddListingDialog = true },
-                        onSelectListing = { selectedListingForDetail = it },
-                        onNavigateToOrders = { currentTab = ScreenTab.ORDERS },
-                        onNavigateToListings = { currentTab = ScreenTab.LISTINGS },
-                        onNavigateToLogs = { currentTab = ScreenTab.LOGS },
-                        onToggleBotActive = { active ->
-                            viewModel.updateSettings(uiState.settings.copy(isBotActive = active))
-                        },
-                        onToggleLiveMode = { viewModel.toggleLiveMode(it) },
-                        onOpenEbayLogin = { showEbayLoginDialog = true },
-                        onCloneOffers = { viewModel.cloneTopResonanceOffers(it) }
+                        onStartScan = { viewModel.startScan() },
+                        onStopScan = { viewModel.stopScan() },
+                        onRejectMatch = { viewModel.decideMatch(it, keep = false) },
+                        onClearResults = { viewModel.clearUndecided() },
+                        onOpenSettings = { currentTab = ScreenTab.SETTINGS },
+                        onOpenReview = { currentTab = ScreenTab.REVIEW }
                     )
-                    ScreenTab.LISTINGS -> ListingsScreen(
+                    ScreenTab.REVIEW -> ReviewScreen(
                         uiState = uiState,
-                        onSelectListing = { selectedListingForDetail = it },
-                        onOpenAddListing = { showAddListingDialog = true },
-                        onSetFilter = { viewModel.setListingFilter(it) },
-                        onSimulateOurSale = { viewModel.simulateOurSale(it) },
-                        onCloneOffers = { viewModel.cloneTopResonanceOffers(it) },
-                        onDeleteSelected = { viewModel.deleteSelectedListings(it) },
-                        onUpdateSelectedMargin = { ids, type, v -> viewModel.updateSelectedListingsMargin(ids, type, v) }
-                    )
-                    ScreenTab.ORDERS -> OrdersScreen(
-                        uiState = uiState,
-                        onSelectOrder = { selectedOrderForFulfillment = it },
-                        onConfirmPayment = { viewModel.confirmPaymentAndFinalize(it) }
+                        onKeep = { viewModel.decideMatch(it, keep = true) },
+                        onReject = { viewModel.decideMatch(it, keep = false) }
                     )
                     ScreenTab.LOGS -> LogsScreen(
                         uiState = uiState,
@@ -301,84 +252,10 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                     ScreenTab.SETTINGS -> SettingsScreen(
                         uiState = uiState,
                         onSaveSettings = { viewModel.updateSettings(it) },
-                        onOpenEbayLogin = { showEbayLoginDialog = true },
-                        onCloneNow = { viewModel.cloneTopResonanceOffers(it) }
+                        onTestConnections = { viewModel.testConnections() }
                     )
                 }
             }
         }
-    }
-
-    // Modal Dialogs
-    if (showAddListingDialog) {
-        AddListingDialog(
-            defaultMarginType = uiState.settings.marginType,
-            defaultMarginEuro = uiState.settings.marginEuro,
-            defaultMarginPercent = uiState.settings.marginPercentage,
-            isLiveMode = uiState.settings.isLiveMode,
-            onDismiss = {
-                showAddListingDialog = false
-                viewModel.clearAiResult()
-            },
-            onConfirm = { title, desc, price, shipping, seller, category, img, score, reason, customPrice ->
-                viewModel.crawlAndAddListing(title, desc, price, shipping, seller, category, img, score, reason, customPrice)
-                showAddListingDialog = false
-                viewModel.clearAiResult()
-            },
-            onAnalyzeAi = { title, desc, price, shipping, cat ->
-                viewModel.analyzeWithGemini(title, desc, price, shipping, cat)
-            },
-            isAiAnalyzing = uiState.isAiAnalyzing,
-            aiResult = uiState.aiAnalysisResult
-        )
-    }
-
-    if (showEbayLoginDialog) {
-        EbayLoginDialog(
-            initialUsername = uiState.settings.ebayUsername.ifBlank { uiState.settings.connectedAccount },
-            isLoggedIn = uiState.settings.isEbayLoggedIn,
-            onLoginSuccess = { username ->
-                viewModel.recordEbayLogin(username)
-                showEbayLoginDialog = false
-            },
-            onDismiss = { showEbayLoginDialog = false }
-        )
-    }
-
-    selectedListingForDetail?.let { listing ->
-        ListingDetailDialog(
-            listing = listing,
-            onDismiss = { selectedListingForDetail = null },
-            onSimulatePriceChange = { id, p, s ->
-                viewModel.simulatePriceChange(id, p, s)
-            },
-            onSimulateOriginalDeleted = { id, reason ->
-                viewModel.simulateOriginalDeletion(id, reason)
-            },
-            onSimulateOurSale = { id ->
-                viewModel.simulateOurSale(id)
-            },
-            onReactivate = { id ->
-                viewModel.reactivateListing(id)
-            },
-            onDelete = { l ->
-                viewModel.deleteListing(l)
-            }
-        )
-    }
-
-    selectedOrderForFulfillment?.let { order ->
-        // Keep order state fresh from uiState
-        val currentOrder = uiState.orders.find { it.id == order.id } ?: order
-        OrderFulfillmentDialog(
-            order = currentOrder,
-            onDismiss = { selectedOrderForFulfillment = null },
-            onConfirmPaymentReceived = { id ->
-                viewModel.confirmPaymentAndFinalize(id)
-            },
-            onCompleteOrder = { id, track ->
-                viewModel.markOrderCompleted(id, track)
-            }
-        )
     }
 }

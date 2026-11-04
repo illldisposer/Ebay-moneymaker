@@ -16,16 +16,14 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Paid
+import androidx.compose.material.icons.automirrored.filled.FactCheck
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -107,11 +105,9 @@ fun LogsScreen(
         ) {
             val filterOptions = listOf(
                 "ALL" to "Alle",
-                "SYNC" to "Live-Syncs",
-                "PRICE" to "Preisspiegelung",
-                "AUTO_BUY" to "Bot-Kauf",
-                "PAYMENT" to "Zahlungen",
-                "DELETED" to "Deaktivierungen",
+                "SCAN" to "Scans",
+                "REVIEW" to "Prüfungen",
+                "CONNECTION" to "Verbindungen",
                 "ERROR" to "Fehler"
             )
             items(filterOptions) { (key, label) ->
@@ -184,12 +180,11 @@ fun LogCard(log: SystemLogEntity) {
     val dateFormatter = remember { SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.GERMANY) }
 
     val (icon, iconColor, bg) = when (log.eventType) {
-        "SYNC_SUCCESS" -> Triple(Icons.Default.Sync, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.surfaceVariant)
-        "PRICE_MIRROR" -> Triple(Icons.Default.AttachMoney, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
-        "AUTO_BUY" -> Triple(Icons.Default.ShoppingCart, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f))
-        "PAYMENT_CONFIRMED" -> Triple(Icons.Default.Paid, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f))
-        "ORIGINAL_DELETED", "ORIGINAL_SOLD" -> Triple(Icons.Default.Warning, MaterialTheme.colorScheme.error, MaterialTheme.colorScheme.error.copy(alpha = 0.12f))
-        "SEARCH_DISCOVERY" -> Triple(Icons.Default.Search, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.surfaceVariant)
+        "SCAN" -> Triple(Icons.Default.Search, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.surfaceVariant)
+        "MATCH" -> Triple(Icons.Default.CheckCircle, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f))
+        "REVIEW" -> Triple(Icons.AutoMirrored.Filled.FactCheck, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f))
+        "THRESHOLD" -> Triple(Icons.Default.Tune, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
+        "CONNECTION" -> Triple(Icons.Default.Sync, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.surfaceVariant)
         else -> Triple(
             if (log.isError) Icons.Default.ErrorOutline else Icons.Default.CheckCircle,
             if (log.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary,
