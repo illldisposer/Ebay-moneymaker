@@ -44,7 +44,6 @@ data class MatchEntity(
     val ebayCurrency: String,
     val ebayImageUrl: String,
     val ebayItemUrl: String,
-    val ebaySeller: String,
     val ebayCondition: String,
     val ebayCandidateCount: Int,
 

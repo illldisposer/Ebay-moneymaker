@@ -18,7 +18,6 @@ data class EbayItem(
     val currency: String,
     val imageUrl: String,
     val itemUrl: String,
-    val seller: String,
     val condition: String
 )
 
@@ -154,7 +153,6 @@ class EbayBrowseClient(private val http: OkHttpClient) {
                     currency = currency,
                     imageUrl = image,
                     itemUrl = o.optString("itemWebUrl"),
-                    seller = o.optJSONObject("seller")?.optString("username").orEmpty(),
                     condition = o.optString("condition")
                 )
             )

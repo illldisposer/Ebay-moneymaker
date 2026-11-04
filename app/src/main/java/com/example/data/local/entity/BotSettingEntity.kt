@@ -19,10 +19,6 @@ data class BotSettingEntity(
     val aliAppSecret: String = "",
     val aliTrackingId: String = "",
 
-    // Gemini (leer = Schlüssel aus .env / BuildConfig)
-    val geminiApiKey: String = "",
-    val geminiModel: String = "gemini-flash-latest",
-
     // Scan
     val searchKeywords: String = "Handyhalterung, LED Streifen, Kabelorganizer",
     val productsPerKeyword: Int = 10,
