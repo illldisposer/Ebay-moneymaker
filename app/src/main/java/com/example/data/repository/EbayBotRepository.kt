@@ -2,14 +2,17 @@ package com.example.data.repository
 
 import com.example.data.api.AliExpressClient
 import com.example.data.api.AliProduct
+import com.example.data.api.EbayApiException
 import com.example.data.api.EbayBrowseClient
 import com.example.data.api.EbayItem
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.BotSettingEntity
+import com.example.data.local.entity.GapEntity
 import com.example.data.local.entity.MatchEntity
 import com.example.data.local.entity.SystemLogEntity
 import com.example.data.matching.ImageFingerprint
 import com.example.data.matching.ProductMatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -43,6 +46,7 @@ class EbayBotRepository(
     private val matchDao = database.matchDao()
     private val logDao = database.systemLogDao()
     private val settingDao = database.botSettingDao()
+    private val gapDao = database.gapDao()
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -57,6 +61,7 @@ class EbayBotRepository(
     val reviewCount: Flow<Int> = matchDao.getReviewCount()
     val allLogs: Flow<List<SystemLogEntity>> = logDao.getAllLogs()
     val settings: Flow<BotSettingEntity?> = settingDao.getSettings()
+    val gaps: Flow<List<GapEntity>> = gapDao.observeAll()
 
     init {
         CoroutineScope(Dispatchers.IO).launch {
@@ -383,5 +388,91 @@ class EbayBotRepository(
 
     suspend fun clearLogs() = withContext(Dispatchers.IO) {
         logDao.clearAllLogs()
+    }
+
+    /**
+     * Sucht eBay-Angebote zum Suchbegriff und merkt sie sich. Die Verkaufsschätzung holen wir
+     * für die ersten Treffer einzeln nach. Bereits gespeicherte Entscheidungen bleiben erhalten.
+     */
+    suspend fun searchGaps(keyword: String, onProgress: (String) -> Unit): String = withContext(Dispatchers.IO) {
+        val s = settingDao.getSettingsOnce() ?: throw EbayApiException("Einstellungen fehlen.")
+        onProgress("eBay wird durchsucht …")
+        val items = ebay.search(s, query = keyword, limit = GAP_SEARCH_LIMIT)
+        if (items.isEmpty()) {
+            log("GAP", "Marktlücken-Suche: $keyword", "Keine Treffer.")
+            return@withContext "Keine Treffer für „$keyword“."
+        }
+
+        val checkCount = minOf(GAP_ENRICH_LIMIT, items.size)
+        val gate = Semaphore(3)
+        val done = AtomicInteger(0)
+        val soldById: Map<String, Int?> = coroutineScope {
+            items.take(checkCount).map { item ->
+                async {
+                    gate.withPermit {
+                        val sold = try {
+                            ebay.fetchSoldEstimate(s, item.itemId)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            null
+                        }
+                        onProgress("Verkaufsschätzung ${done.incrementAndGet()}/$checkCount")
+                        item.itemId to sold
+                    }
+                }
+            }.awaitAll().toMap()
+        }
+
+        var newCount = 0
+        for (item in items) {
+            val fresh = GapEntity(
+                ebayItemId = item.itemId,
+                keyword = keyword,
+                ebayTitle = item.title,
+                ebayPrice = item.price,
+                ebayShipping = item.shipping,
+                ebayCurrency = item.currency,
+                ebayImageUrl = item.imageUrl,
+                ebayItemUrl = item.itemUrl,
+                ebayCondition = item.condition,
+                ebaySoldEstimate = soldById[item.itemId],
+                gtin = ProductMatcher.extractGtin(item.title),
+                amazonQuery = ProductMatcher.extractGtin(item.title) ?: ProductMatcher.buildSearchQuery(item.title, 6)
+            )
+            val existing = gapDao.getByEbayItemId(item.itemId)
+            if (existing == null) {
+                gapDao.insert(fresh)
+                newCount++
+            } else {
+                // Preis und Bild aktualisieren, Prüfstatus behalten
+                gapDao.update(
+                    fresh.copy(
+                        id = existing.id,
+                        amazonStatus = existing.amazonStatus,
+                        foundAt = existing.foundAt,
+                        decidedAt = existing.decidedAt
+                    )
+                )
+            }
+        }
+
+        val withSold = soldById.values.count { it != null }
+        val message = "${items.size} Treffer, $newCount neu gemerkt. Verkaufsangabe von eBay: $withSold von $checkCount geprüften."
+        log("GAP", "Marktlücken-Suche: $keyword", message)
+        message
+    }
+
+    suspend fun decideGap(id: Long, status: String) = withContext(Dispatchers.IO) {
+        gapDao.updateStatus(id, status, System.currentTimeMillis())
+    }
+
+    suspend fun clearOpenGaps(): Int = withContext(Dispatchers.IO) {
+        gapDao.deleteOpen()
+    }
+
+    private companion object {
+        const val GAP_SEARCH_LIMIT = 50
+        const val GAP_ENRICH_LIMIT = 25
     }
 }

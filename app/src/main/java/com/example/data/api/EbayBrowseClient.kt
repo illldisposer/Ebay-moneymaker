@@ -116,6 +116,40 @@ class EbayBrowseClient(private val http: OkHttpClient) {
         }
     }
 
+    /**
+     * Geschätzte Verkaufsmenge eines Angebots aus der Einzelabfrage (estimatedAvailabilities).
+     * Liefert null, wenn eBay keine Angabe macht. Klick- oder Aufrufzahlen liefert eBay nicht.
+     */
+    suspend fun fetchSoldEstimate(settings: BotSettingEntity, itemId: String): Int? = withContext(Dispatchers.IO) {
+        val token = fetchToken(settings)
+        val url = "${baseUrl(settings)}/buy/browse/v1/item".toHttpUrl().newBuilder()
+            .addPathSegment(itemId)
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $token")
+            .header("X-EBAY-C-MARKETPLACE-ID", settings.ebayMarketplaceId.ifBlank { "EBAY_DE" })
+            .header("X-EBAY-C-ENDUSERCTX", "contextualLocation=country%3DDE")
+            .header("Accept-Language", "de-DE")
+            .get()
+            .build()
+
+        http.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) return@use null
+            val arr = JSONObject(text).optJSONArray("estimatedAvailabilities") ?: return@use null
+            var best: Int? = null
+            for (i in 0 until arr.length()) {
+                val entry = arr.optJSONObject(i) ?: continue
+                if (!entry.has("estimatedSoldQuantity")) continue
+                val sold = entry.optInt("estimatedSoldQuantity", -1)
+                if (sold >= 0) best = maxOf(best ?: 0, sold)
+            }
+            best
+        }
+    }
+
     suspend fun testConnection(settings: BotSettingEntity): String = withContext(Dispatchers.IO) {
         val items = search(settings, query = "usb kabel", limit = 1)
         val env = if (settings.ebayUseSandbox) "Sandbox" else "Produktion"

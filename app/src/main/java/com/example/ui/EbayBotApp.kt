@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.automirrored.filled.FactCheck
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radar
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Sync
@@ -54,6 +55,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.screens.GapScreen
 import com.example.ui.screens.LogsScreen
 import com.example.ui.screens.ReviewScreen
 import com.example.ui.screens.ScannerScreen
@@ -63,6 +65,7 @@ import kotlinx.coroutines.delay
 
 enum class ScreenTab(val title: String, val icon: ImageVector) {
     SCANNER("Scanner", Icons.Default.Radar),
+    GAPS("Marktlücken", Icons.Default.Search),
     REVIEW("Prüfen", Icons.AutoMirrored.Filled.FactCheck),
     LOGS("Protokoll", Icons.Default.ViewHeadline),
     SETTINGS("Einstellungen", Icons.Default.Settings)
@@ -72,6 +75,7 @@ enum class ScreenTab(val title: String, val icon: ImageVector) {
 @Composable
 fun EbayBotApp(viewModel: EbayBotViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val gapState by viewModel.gapState.collectAsStateWithLifecycle()
     var currentTab by remember { mutableStateOf(ScreenTab.SCANNER) }
 
     // Auto dismiss notification banner after 5 seconds
@@ -238,6 +242,13 @@ fun EbayBotApp(viewModel: EbayBotViewModel) {
                         onClearResults = { viewModel.clearUndecided() },
                         onOpenSettings = { currentTab = ScreenTab.SETTINGS },
                         onOpenReview = { currentTab = ScreenTab.REVIEW }
+                    )
+                    ScreenTab.GAPS -> GapScreen(
+                        state = gapState,
+                        onSearch = { viewModel.searchGaps(it) },
+                        onFilter = { viewModel.setGapFilter(it) },
+                        onDecide = { id, status -> viewModel.decideGap(id, status) },
+                        onClearOpen = { viewModel.clearOpenGaps() }
                     )
                     ScreenTab.REVIEW -> ReviewScreen(
                         uiState = uiState,
